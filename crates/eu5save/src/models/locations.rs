@@ -137,6 +137,25 @@ pub struct Location<'bump> {
     /// past date.
     #[arena(default)]
     pub ownership_history: &'bump [LocationOwnership<'bump>],
+    /// Modifiers saved on this location, including those added by mods.
+    #[arena(default)]
+    pub timed_modifiers: LocationTimedModifiers<'bump>,
+}
+
+/// EU5 wraps its modifier array in a second `timed_modifiers` object.
+#[derive(Debug, Default, ArenaDeserialize)]
+pub struct LocationTimedModifiers<'bump> {
+    #[arena(default)]
+    pub timed_modifiers: &'bump [LocationTimedModifier<'bump>],
+}
+
+#[derive(Debug, ArenaDeserialize)]
+pub struct LocationTimedModifier<'bump> {
+    pub modifier: models::BStr<'bump>,
+    pub start_date: Option<Eu5Date>,
+    pub date: Option<Eu5Date>,
+    #[arena(default)]
+    pub size: f64,
 }
 
 /// One entry of a [`Location::ownership_history`].
@@ -368,6 +387,32 @@ impl<T> Index<LocationIdx> for LocationIndexedVec<T> {
 mod tests {
     use super::*;
     use jomini::{TextDeserializer, common::PdsDate};
+
+    #[test]
+    fn location_timed_modifiers_are_read_and_missing_modifiers_are_empty() {
+        #[derive(ArenaDeserialize)]
+        struct Wrapper<'bump> {
+            location: Location<'bump>,
+        }
+        let arena = arena_serde::Arena::new();
+        let data = r#"location={ timed_modifiers={ timed_modifiers={ { modifier=mnt_center_trade_regional start_date=1677.3.25 date=9999.1.1 size=1 } { modifier=mnt_center_culture_local size=1 } } } }"#;
+        let de = TextDeserializer::from_utf8_slice(data.as_bytes()).unwrap();
+        let location = Wrapper::deserialize_in_arena(&de, &arena).unwrap().location;
+        let [trade, culture] = location.timed_modifiers.timed_modifiers else {
+            panic!("expected modifiers")
+        };
+        assert_eq!(trade.modifier.to_str(), "mnt_center_trade_regional");
+        assert_eq!(
+            trade.start_date.unwrap().game_fmt().to_string(),
+            "1677.3.25"
+        );
+        assert_eq!(trade.size, 1.0);
+        assert_eq!(culture.modifier.to_str(), "mnt_center_culture_local");
+        assert!(culture.start_date.is_none());
+        let de = TextDeserializer::from_utf8_slice(b"location={}").unwrap();
+        let empty = Wrapper::deserialize_in_arena(&de, &arena).unwrap().location;
+        assert!(empty.timed_modifiers.timed_modifiers.is_empty());
+    }
 
     /// Location 134 in a 1346 save: Denmark held it from the start of the
     /// campaign, and Skane took it on 1338.6.3.

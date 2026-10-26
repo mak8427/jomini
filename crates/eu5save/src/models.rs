@@ -95,6 +95,8 @@ pub struct Gamestate<'bump> {
     pub diplomacy_manager: DiplomacyManager<'bump>,
     pub market_manager: MarketManager<'bump>,
     pub building_manager: BuildingManager<'bump>,
+    /// Saved estate entries; absent in saves that do not contain the manager.
+    pub estate_manager: Option<Eu5Database<'bump, Estate<'bump>>>,
     pub character_db: CharacterDb<'bump>,
     pub war_manager: WarManager<'bump>,
     pub unit_manager: UnitManager<'bump>,
@@ -105,6 +107,33 @@ pub struct Gamestate<'bump> {
     pub culture_manager: CultureManager<'bump>,
     #[arena(default)]
     pub timeline_manager: TimelineManager<'bump>,
+}
+
+/// Raw estate information stored by EU5. Missing values remain unavailable.
+#[derive(Debug, ArenaDeserialize)]
+pub struct Estate<'bump> {
+    pub estate_type: BStr<'bump>,
+    pub country: CountryId,
+    pub balance: Option<f64>,
+    pub wealth_impact: Option<f64>,
+    pub satisfaction: Option<f64>,
+    pub existence: Option<bool>,
+    pub last_month: Option<EstateMonthlyAccounts>,
+}
+
+#[derive(Debug, ArenaDeserialize)]
+pub struct EstateMonthlyAccounts {
+    pub taxable_income: Option<f64>,
+    pub uncontrolled_income: Option<f64>,
+    pub city_income: Option<f64>,
+    pub trade_income: Option<f64>,
+    pub food_income: Option<f64>,
+    pub food_expense: Option<f64>,
+    pub paid_taxes: Option<f64>,
+    pub pop_expense: Option<f64>,
+    pub rebel_expense: Option<f64>,
+    pub tariff_income: Option<f64>,
+    pub other: Option<f64>,
 }
 
 #[derive(Debug, ArenaDeserialize)]
@@ -304,6 +333,25 @@ impl<'bump> Gamestate<'bump> {
 mod tests {
     use super::*;
     use jomini::TextDeserializer;
+
+    #[test]
+    fn reads_estate_database_and_preserves_missing_fields() {
+        let arena = arena_serde::Arena::new();
+        let source = b"database={ 7={ estate_type=burghers_estate country=3 balance=-251.2 satisfaction=0.48 existence=yes last_month={ trade_income=10.95 paid_taxes=531.7 } } 8=none }";
+        let de = TextDeserializer::from_utf8_slice(source).unwrap();
+        let estates = Eu5Database::<Estate>::deserialize_in_arena(&de, &arena).unwrap();
+        let estate = estates.database[0].1.as_ref().unwrap();
+        assert_eq!(estate.estate_type.to_str(), "burghers_estate");
+        assert_eq!(estate.country, CountryId::new(3));
+        assert_eq!(estate.balance, Some(-251.2));
+        assert_eq!(estate.existence, Some(true));
+        assert_eq!(
+            estate.last_month.as_ref().unwrap().trade_income,
+            Some(10.95)
+        );
+        assert_eq!(estate.last_month.as_ref().unwrap().food_income, None);
+        assert!(estates.database[1].1.is_none());
+    }
 
     #[test]
     fn test_gamestate_is_send_sync() {
